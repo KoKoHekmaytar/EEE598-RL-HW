@@ -1,39 +1,17 @@
-# Complete, runnable Q-learning demo for the 3x4 stochastic gridworld.
-# It trains a Q-table, then shows:
-# 1) Learning curve (returns)
-# 2) Episode length curve (optional but useful)
-# 3) Exploration (epsilon) schedule
-# 4) Value heatmap & final greedy policy
-# 5) A visualization of the GREEDY TRAJECTORY from START after training, with total return
-#
-# You can tweak HYPERPARAMS below and re-run.
-
 import numpy as np, random, matplotlib.pyplot as plt
 from dataclasses import dataclass
-import pandas as pd
+import matplotlib.animation as animation
 
-# ------------------------------
-# Environment
-# ------------------------------
 class GridWorld3x4:
-    """
-    3 rows x 4 columns grid.
-    0-indexed coordinates: (row, col) with row=0 at bottom, row=2 at top.
-    START = (0,0). Terminals: +1 at (2,3), -1 at (1,3) (can be -200 via flag).
-    Actions: 0:N, 1:E, 2:S, 3:W.
-    Stochastic: intended 0.8, left 0.1, right 0.1. Walls keep you in place.
-    Non-terminal step reward = -0.04.
-    """
     def __init__(self, penalty_minus_one=True, step_cost=-0.04, seed=0):
         self.rows, self.cols = 3, 4
         self.start = (0,0)
-        self.terminal_pos_plus  = (2,3)  # +1
-        self.terminal_pos_minus = (1,3)  # -1
-        self.wall_pos = (1, 1)  # Wall at position (1,1) - impassable
+        self.terminal_pos_plus  = (2,3)
+        self.terminal_pos_minus = (1,3)
+        self.wall_pos = (1, 1)
         self.step_cost = step_cost
         self.penalty_minus_one_flag = penalty_minus_one
         self.rng = np.random.default_rng(seed)
-        # action deltas: N,E,S,W (row increases upward)
         self.actions = {0:(1,0), 1:(0,1), 2:(-1,0), 3:(0,-1)}
         self.left_of  = {0:3, 1:0, 2:1, 3:2}
         self.right_of = {0:1, 1:2, 2:3, 3:0}
@@ -48,33 +26,25 @@ class GridWorld3x4:
         return self.start
 
     def step(self, s, a):
-        # If already terminal, stay with zero reward
         if self.is_terminal(s): 
             return s, 0.0, True
-        # Sample slip
         p = self.rng.random()
         if p < 0.8:   a_exec = a
         elif p < 0.9: a_exec = self.left_of[a]
         else:         a_exec = self.right_of[a]
         dr, dc = self.actions[a_exec]
         r, c = s[0] + dr, s[1] + dc
-        # Check boundaries
         if not (0 <= r < self.rows and 0 <= c < self.cols):
             r, c = s
-        # Check wall collision
         elif self.is_wall((r, c)):
-            r, c = s  # Stay in current position if hitting wall
+            r, c = s
         s2 = (r, c)
-        # Rewards
         if s2 == self.terminal_pos_plus:
             return s2, 1.0, True
         if s2 == self.terminal_pos_minus:
             return s2, (-1.0 if self.penalty_minus_one_flag else -200.0), True
         return s2, self.step_cost, False
 
-# ------------------------------
-# Q-learning core
-# ------------------------------
 @dataclass
 class HyperParams:
     episodes: int = 4000
@@ -96,7 +66,6 @@ def run_q_learning(env: GridWorld3x4, hp: HyperParams):
     np.random.seed(hp.seed)
 
     for ep in range(hp.episodes):
-        # Linear ε decay
         eps = hp.eps_end + max(0, hp.eps_decay_episodes-ep)*(hp.eps_start-hp.eps_end)/max(1, hp.eps_decay_episodes)
         eps = max(hp.eps_end, min(hp.eps_start, eps))
         eps_hist.append(eps)
@@ -105,7 +74,6 @@ def run_q_learning(env: GridWorld3x4, hp: HyperParams):
         G, disc = 0.0, 1.0
         for t in range(hp.max_steps):
             si = idx(s)
-            # ε-greedy action
             if random.random() < eps:
                 a = random.randint(0, nA-1)
             else:
@@ -113,10 +81,8 @@ def run_q_learning(env: GridWorld3x4, hp: HyperParams):
                 a = int(np.random.choice(best))
             s2, r, done = env.step(s, a)
             sj = idx(s2)
-            # Q-learning target (off-policy, bootstrap with max)
             target = r + (0.0 if env.is_terminal(s2) else hp.gamma*np.max(Q[sj]))
             Q[si, a] += hp.alpha * (target - Q[si, a])
-            # book-keeping
             G += disc * r
             disc *= hp.gamma
             s = s2
@@ -149,64 +115,7 @@ def policy_arrows(Pi):
         lines.append(" ".join(sym[int(a)] for a in Pi[r]))
     return "\n".join(lines)
 
-# Simulate one GREEDY trajectory after training, compute return, and plot the path
-def simulate_greedy_trajectory(env: GridWorld3x4, Q, gamma=0.99, max_steps=50, seed=999):
-    rng = np.random.default_rng(seed)
-    # temporarily swap env RNG to make the rollout reproducible
-    old_rng = env.rng
-    env.rng = rng
-    s = env.reset()
-    states = [s]
-    rewards = []
-    nA = 4
-    def idx(s): return s[0]*env.cols + s[1]
-    for t in range(max_steps):
-        i = idx(s)
-        a = int(np.argmax(Q[i]))  # greedy
-        s2, r, done = env.step(s, a)
-        states.append(s2); rewards.append(r)
-        s = s2
-        if done: break
-    # restore RNG
-    env.rng = old_rng
-    # compute discounted return of this rollout
-    G = 0.0
-    disc = 1.0
-    for r in rewards:
-        G += disc * r
-        disc *= gamma
-    return states, rewards, G
 
-def plot_trajectory(env: GridWorld3x4, states, title="Greedy trajectory after training"):
-    # Draw grid and connect centers of visited cells
-    plt.figure()
-    # grid lines
-    for r in range(env.rows+1):
-        plt.plot([0, env.cols], [r, r])
-    for c in range(env.cols+1):
-        plt.plot([c, c], [0, env.rows])
-    # cell centers
-    xs = [c+0.5 for (r,c) in states]
-    ys = [r+0.5 for (r,c) in states]
-    # path
-    plt.plot(xs, ys, marker='o')
-    # mark start and terminals
-    s = env.start
-    plt.text(s[1]+0.5, s[0]+0.5, "START", ha='center', va='center')
-    tp = env.terminal_pos_plus
-    tm = env.terminal_pos_minus
-    plt.text(tp[1]+0.5, tp[0]+0.5, "+1", ha='center', va='center')
-    plt.text(tm[1]+0.5, tm[0]+0.5, "-1", ha='center', va='center')
-    plt.gca().set_xlim(0, env.cols)
-    plt.gca().set_ylim(0, env.rows)
-    plt.gca().set_aspect('equal')
-    plt.title(title)
-    plt.xlabel("col"); plt.ylabel("row")
-    plt.show()
-
-# ------------------------------
-# HYPERPARAMS and Training
-# ------------------------------
 hp = HyperParams(
     episodes=4000,
     alpha=0.1,
@@ -222,9 +131,6 @@ env = GridWorld3x4(penalty_minus_one=True, step_cost=-0.04, seed=hp.seed)
 Q, returns, steps_hist, eps_hist = run_q_learning(env, hp)
 V, Pi = derive_V_and_policy(env, Q)
 
-# ------------------------------
-# 1) Learning curve (returns)
-# ------------------------------
 plt.figure()
 plt.plot(returns, label="Return/episode")
 if len(returns) >= 50:
@@ -233,49 +139,113 @@ if len(returns) >= 50:
 plt.xlabel("Episode"); plt.ylabel("Return"); plt.title("Learning curve"); plt.legend()
 plt.show()
 
-# 2) Episode length (optional but helpful)
-plt.figure()
-plt.plot(steps_hist, label="Steps/episode")
-if len(steps_hist) >= 50:
-    ma = np.convolve(steps_hist, np.ones(50)/50, mode='valid')
-    plt.plot(range(49, len(steps_hist)), ma, label="Moving avg (50)")
-plt.xlabel("Episode"); plt.ylabel("Steps"); plt.title("Episode length"); plt.legend()
-plt.show()
-
-# 3) Exploration schedule
-plt.figure()
-plt.plot(eps_hist)
-plt.xlabel("Episode"); plt.ylabel("epsilon"); plt.title("Exploration schedule")
-plt.show()
-
-# 4) Value heatmap
 plt.figure()
 plt.imshow(V, origin='lower')
 plt.colorbar()
-plt.title("State values V(s) = max_a Q(s,a)")
+plt.title("Q-values V(s) = max_a Q(s,a)")
 plt.xticks(range(env.cols), [str(c+1) for c in range(env.cols)])
 plt.yticks(range(env.rows), [str(r+1) for r in range(env.rows)])
 plt.show()
 
-# 5) Final greedy policy (text)
-print("Final greedy policy (top row first; arrows N/E/S/W; T=terminal):")
-print(policy_arrows(Pi))
-
-# 6) Greedy trajectory after training, with return
-states, rewards, G = simulate_greedy_trajectory(env, Q, gamma=hp.gamma, max_steps=50, seed=999)
-print("\nGreedy trajectory states:", states)
-print("Greedy trajectory rewards:", rewards)
-print(f"Total discounted return of this rollout (γ={hp.gamma}): {G:.3f}")
-plot_trajectory(env, states, title=f"Greedy trajectory; discounted return = {G:.3f}")
-
-# 7) Show the Q-table and best action per state
-rows=[]
-for r in range(env.rows):
-    for c in range(env.cols):
-        i = r*env.cols + c
-        qN,qE,qS,qW = Q[i]
-        rows.append({"row":r+1,"col":c+1,"Q_N":qN,"Q_E":qE,"Q_S":qS,"Q_W":qW,
-                     "V=max(Q)":max(Q[i]),"best_a_idx":int(np.argmax(Q[i]))})
-df = pd.DataFrame(rows)
 
 
+def create_agent_video(env, Q, max_steps=20, seed=42, filename='agent_movement.mp4'):
+    rng = np.random.default_rng(seed)
+    old_rng = env.rng
+    env.rng = rng
+    
+    s = env.reset()
+    states = [s]
+    actions = []
+    rewards = []
+    
+    def idx(s): return s[0]*env.cols + s[1]
+    
+    for step in range(max_steps):
+        i = idx(s)
+        a = int(np.argmax(Q[i]))
+        s2, r, done = env.step(s, a)
+        
+        states.append(s2)
+        actions.append(a)
+        rewards.append(r)
+        
+        if done:
+            break
+        s = s2
+    
+    env.rng = old_rng
+    
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    for r in range(env.rows+1):
+        ax.plot([0, env.cols], [r, r], 'k-', linewidth=3)
+    for c in range(env.cols+1):
+        ax.plot([c, c], [0, env.rows], 'k-', linewidth=3)
+    
+    start_r, start_c = env.start
+    ax.add_patch(plt.Rectangle((start_c, start_r), 1, 1, facecolor='lightgreen', alpha=0.8, edgecolor='darkgreen', linewidth=2))
+    ax.text(start_c+0.5, start_r+0.5, "START", ha='center', va='center', fontsize=16, weight='bold', color='darkgreen')
+    
+    goal_r, goal_c = env.terminal_pos_plus
+    ax.add_patch(plt.Rectangle((goal_c, goal_r), 1, 1, facecolor='lightblue', alpha=0.8, edgecolor='darkblue', linewidth=2))
+    ax.text(goal_c+0.5, goal_r+0.5, "+1", ha='center', va='center', fontsize=16, weight='bold', color='darkblue')
+    
+    trap_r, trap_c = env.terminal_pos_minus
+    ax.add_patch(plt.Rectangle((trap_c, trap_r), 1, 1, facecolor='lightcoral', alpha=0.8, edgecolor='darkred', linewidth=2))
+    ax.text(trap_c+0.5, trap_r+0.5, "-1", ha='center', va='center', fontsize=16, weight='bold', color='darkred')
+    
+    wall_r, wall_c = env.wall_pos
+    ax.add_patch(plt.Rectangle((wall_c, wall_r), 1, 1, facecolor='gray', alpha=0.9, edgecolor='black', linewidth=2))
+    ax.text(wall_c+0.5, wall_r+0.5, "WALL", ha='center', va='center', fontsize=14, weight='bold', color='white')
+    
+    ax.set_xlim(-0.1, env.cols+0.1)
+    ax.set_ylim(-0.1, env.rows+0.1)
+    ax.set_aspect('equal')
+    ax.set_title('Q-Learning Agent Movement Animation', fontsize=18, weight='bold', pad=20)
+    ax.set_xlabel('Column', fontsize=14)
+    ax.set_ylabel('Row', fontsize=14)
+    ax.grid(True, alpha=0.3)
+    
+    agent_marker, = ax.plot([], [], 'ro', markersize=20, label='Agent', markeredgecolor='darkred', markeredgewidth=2)
+    path_line, = ax.plot([], [], 'b-', linewidth=4, alpha=0.8, label='Path')
+    step_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, fontsize=14, 
+                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9, edgecolor='black'))
+    
+    def animate(frame):
+        if frame < len(states):
+            current_state = states[frame]
+            x, y = current_state[1] + 0.5, current_state[0] + 0.5
+            
+            agent_marker.set_data([x], [y])
+            
+            if frame > 0:
+                path_xs = [s[1] + 0.5 for s in states[:frame+1]]
+                path_ys = [s[0] + 0.5 for s in states[:frame+1]]
+                path_line.set_data(path_xs, path_ys)
+            
+            if frame < len(actions):
+                action_names = {0: 'North ↑', 1: 'East →', 2: 'South ↓', 3: 'West ←'}
+                action_name = action_names[actions[frame]]
+                reward = rewards[frame]
+                step_text.set_text(f'Step {frame+1}: {states[frame]} → {states[frame+1]}\nAction: {action_name}\nReward: {reward:.3f}')
+            else:
+                step_text.set_text(f'Episode Complete!\nTotal Steps: {len(states)-1}\nTotal Reward: {sum(rewards):.3f}')
+        
+        return agent_marker, path_line, step_text
+    
+    anim = animation.FuncAnimation(fig, animate, frames=len(states), 
+                                 interval=800, repeat=False, blit=False)
+    
+    plt.legend(fontsize=12, loc='upper right')
+    plt.tight_layout()
+    
+    print(f"Creating high-quality video: {filename}")
+    gif_filename = filename.replace('.mp4', '.gif')
+    anim.save(gif_filename, writer='pillow', fps=1.25)
+    print(f"GIF saved as '{gif_filename}'")
+    
+    return states, actions, rewards, anim
+
+print("Creating animated GIF...")
+states, actions, rewards, anim = create_agent_video(env, Q, max_steps=20, seed=42, filename='q_learning_agent.mp4')
