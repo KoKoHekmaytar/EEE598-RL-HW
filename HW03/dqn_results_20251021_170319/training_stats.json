@@ -1,0 +1,22 @@
+{
+  "final_training_return": 0.6330302964316264,
+  "final_evaluation_return": 0.6978996016469029,
+  "total_episodes": 4000,
+  "total_gradient_steps": 49983,
+  "final_epsilon": 0.05,
+  "hyperparameters": {
+    "episodes": 4000,
+    "max_steps": 100,
+    "gamma": 0.99,
+    "lr": 0.001,
+    "batch_size": 64,
+    "buffer_size": 5000,
+    "hidden_size": 64,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_episodes": 2500,
+    "eval_frequency": 200,
+    "eval_episodes": 50,
+    "seed": 123
+  }
+}
